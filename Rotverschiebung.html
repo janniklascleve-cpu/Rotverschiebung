@@ -1,0 +1,515 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>V-STARS | Astrophysikalische Analysestation v6.1</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&family=Inter:wght@300;400;600&display=swap');
+        
+        :root {
+            --bg-deep: #05070a;
+            --panel-bg: #0d1117;
+            --accent-cyan: #06b6d4;
+        }
+
+        body { 
+            font-family: 'Inter', sans-serif; 
+            background-color: var(--bg-deep); 
+            color: #e5e7eb;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            margin: 0;
+        }
+
+        .mono { font-family: 'JetBrains Mono', monospace; }
+        
+        .glass-panel {
+            background: var(--panel-bg);
+            border: 1px solid #30363d;
+            border-radius: 8px;
+            display: flex;
+            flex-direction: column;
+        }
+
+        /* Fixed coordinate system for sliders */
+        input[type=range] {
+            -webkit-appearance: none;
+            background: #21262d;
+            height: 4px;
+            width: 100%;
+            border-radius: 2px;
+        }
+        input[type=range]:disabled {
+            background: #0d1117;
+            cursor: not-allowed;
+            opacity: 0.2;
+        }
+        input[type=range]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            width: 14px;
+            height: 14px;
+            background: var(--accent-cyan);
+            border-radius: 2px;
+            cursor: pointer;
+        }
+
+        .view-btn {
+            background: #161b22;
+            border: 1px solid #30363d;
+            padding: 8px 16px;
+            font-size: 11px;
+            font-weight: 600;
+            text-transform: uppercase;
+            transition: all 0.2s;
+            color: #8b949e;
+            border-radius: 4px;
+        }
+        .view-btn.active {
+            background: rgba(6, 182, 212, 0.1);
+            border-color: var(--accent-cyan);
+            color: white;
+            box-shadow: 0 0 15px rgba(6, 182, 212, 0.2);
+        }
+
+        .status-light {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+        }
+
+        .hidden-view { display: none !important; }
+
+        /* Prevent overflow issues */
+        canvas { 
+            image-rendering: auto; 
+            max-width: 100%;
+            display: block;
+        }
+    </style>
+</head>
+<body class="p-4 md:p-6">
+
+    <header class="mb-4 flex flex-col md:flex-row justify-between items-start gap-4">
+        <div class="flex items-center gap-4">
+            <div class="w-12 h-12 border-2 border-cyan-500 flex items-center justify-center font-bold text-2xl text-cyan-400 bg-cyan-950/20 rounded-xl">V</div>
+            <div>
+                <h1 class="text-lg font-bold tracking-wider uppercase">V-STARS <span class="text-gray-500 font-light">PRO Suite v6.1</span></h1>
+                <select id="scenarioSelect" class="bg-black text-xs p-2 mt-1 mono border border-gray-700 rounded outline-none focus:border-cyan-500 text-cyan-400 w-full md:w-80">
+                    <option value="ngc4889">1. NGC 4889 (Coma Cluster - Hoher Redshift)</option>
+                    <option value="ngc4472">2. NGC 4472 (Elliptische Galaxie - Distanz/Velocity)</option>
+                    <option value="binary_sys">3. Alpha Virginis System (BINÄRE HÖRNER)</option>
+                    <option value="ngc2841">4. NGC 2841 (Flockige Spirale - Linienprofil)</option>
+                    <option value="eridani_b">5. 40 Eridani B (Weißer Zwerg - Gravitation)</option>
+                </select>
+            </div>
+        </div>
+
+        <div class="flex gap-2">
+            <button id="toggle-hubble" class="view-btn">Luminosität prüfen</button>
+            <button id="toggle-spectral" class="view-btn active">Intensitätskurve</button>
+        </div>
+    </header>
+
+    <main class="flex-grow flex flex-col gap-4 overflow-hidden">
+        
+        <div id="display-area" class="flex-grow grid grid-cols-1 lg:grid-cols-12 gap-4 min-h-0">
+            
+            <!-- Linkes Panel: Hubble Diagramm -->
+            <div id="panel-hubble" class="lg:col-span-4 glass-panel p-4 hidden-view">
+                <span class="text-[10px] uppercase tracking-widest text-gray-500 mb-2 font-bold mono">Hubble-Lemaître Diagramm [Magnitude / log(d)]</span>
+                <div class="relative flex-grow min-h-0">
+                    <canvas id="hubbleCanvas" class="w-full h-full bg-[#020408] rounded border border-gray-800"></canvas>
+                </div>
+            </div>
+
+            <!-- Rechtes Panel: Analyse Workstation -->
+            <div id="panel-analysis" class="lg:col-span-12 glass-panel p-4 overflow-hidden flex flex-col">
+                <div class="flex flex-col gap-4 h-full overflow-y-auto pr-1">
+                    
+                    <div class="space-y-4">
+                        <div class="flex flex-col gap-1">
+                            <div class="flex justify-between text-[9px] mono text-gray-500 px-1 uppercase tracking-tighter">
+                                <span>Beobachtungsdaten (Referenz-CCD)</span>
+                                <span>380nm — 850nm</span>
+                            </div>
+                            <canvas id="tapeTarget" class="h-10 w-full rounded border border-gray-800 opacity-80"></canvas>
+                        </div>
+                        
+                        <div class="flex flex-col gap-1">
+                            <div class="flex justify-between text-[9px] mono text-cyan-500 px-1 uppercase tracking-tighter">
+                                <span>Physikalisches Modell (Simulation)</span>
+                                <span id="model-z-info">z_total: 0.000</span>
+                            </div>
+                            <canvas id="tapeUser" class="h-10 w-full rounded border border-cyan-900/40"></canvas>
+                        </div>
+
+                        <!-- Farb-Referenz-Leiste -->
+                        <div id="color-bar" class="h-1.5 w-full rounded-full overflow-hidden flex opacity-40"></div>
+                    </div>
+
+                    <div id="panel-spectral" class="flex-grow min-h-[300px] border-t border-gray-800 pt-4 flex flex-col">
+                        <span class="text-[10px] uppercase tracking-widest text-gray-500 mb-2 block font-bold mono">Spektrale Energieverteilung [Fλ / λ]</span>
+                        <div class="flex-grow relative">
+                            <canvas id="specCanvas" class="w-full h-full bg-[#020408] rounded"></canvas>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="glass-panel p-4 md:p-6 shadow-2xl shrink-0">
+            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+                <div>
+                    <div class="flex justify-between mb-2">
+                        <label class="text-[10px] uppercase text-gray-400 mono">Entfernung (<span id="unit-dist">Mpc</span>)</label>
+                        <span id="val-dist" class="text-xs mono text-cyan-400">0</span>
+                    </div>
+                    <input type="range" id="input-dist" min="0" max="250" step="0.001" value="0">
+                    <div class="text-[9px] text-gray-600 mt-1 mono">Expansion (z_cos): <span id="val-zcos">0.0000</span></div>
+                </div>
+                <div>
+                    <div class="flex justify-between mb-2">
+                        <label class="text-[10px] uppercase text-gray-400 mono">Radialgeschw. (km/s)</label>
+                        <span id="val-dop" class="text-xs mono text-cyan-400">0</span>
+                    </div>
+                    <input type="range" id="input-dop" min="-1500" max="15000" step="1" value="0">
+                    <div class="text-[9px] text-gray-600 mt-1 mono">Doppler-Effekt (z_dop)</div>
+                </div>
+                <div>
+                    <div class="flex justify-between mb-2">
+                        <label class="text-[10px] uppercase text-gray-400 mono">Einstein-Feld (Φ/c²)</label>
+                        <span id="val-grav" class="text-xs mono text-gray-600 italic">GESPERRT</span>
+                    </div>
+                    <input type="range" id="input-grav" min="0" max="0.0003" step="0.000001" value="0" disabled>
+                    <div class="text-[9px] text-gray-600 mt-1 mono">Gravitations-Rotverschiebung (z_grav)</div>
+                </div>
+                <div>
+                    <div class="flex justify-between mb-2">
+                        <label class="text-[10px] uppercase text-gray-400 mono">Eigen-Rotation (km/s)</label>
+                        <span id="val-rot" class="text-xs mono text-cyan-400">0</span>
+                    </div>
+                    <input type="range" id="input-rot" min="0" max="1500" step="1" value="0">
+                    <div class="text-[9px] text-gray-600 mt-1 mono">Profil-Verbreiterung (Doppel-Hörner)</div>
+                </div>
+            </div>
+        </div>
+
+        <div id="match-panel" class="glass-panel p-3 flex items-center justify-between shrink-0">
+            <div class="flex items-center gap-4 ml-2">
+                <div id="conf-light" class="status-light bg-red-500 shadow-[0_0_10px_red]"></div>
+                <div>
+                    <div id="conf-label" class="text-[10px] uppercase mono font-bold text-red-500">Signal-Inkonsistenz</div>
+                    <div id="match-data" class="text-[9px] text-gray-500 mono tracking-tight">Abweichung detektiert. Modell-Parameter nicht kongruent.</div>
+                </div>
+            </div>
+            <div class="text-[10px] mono text-gray-600 mr-2 uppercase hidden md:block">
+                Precision Spectrograph Interface v6.1 | [STABLE-Y-AXIS]
+            </div>
+        </div>
+    </main>
+
+    <script>
+        const C = 299792.458;
+        const H0 = 70.0; 
+        const MIN_WL = 380;
+        const MAX_WL = 850; 
+        // Focus on strong absorption lines for visibility
+        const LINES = { HB: 486.1, NA: 589.0, HA: 656.3 };
+
+        const PHYSICS_TARGETS = {
+            ngc4889: { dist: 95.0, dop: 6495, grav: 0, rot: 0, mag: 11.4, maxD: 250, unit: 'Mpc' },
+            ngc4472: { dist: 16.4, dop: 980, grav: 0, rot: 0, mag: 8.4, maxD: 60, unit: 'Mpc' },
+            binary_sys: { dist: 0.1, dop: -20, grav: 0, rot: 850, mag: 1.0, maxD: 0.5, unit: 'kpc', isStar: true, isBinary: true },
+            ngc2841: { dist: 14.1, dop: 638, grav: 0, rot: 420, mag: 10.1, maxD: 40, unit: 'Mpc', needsRot: true },
+            eridani_b: { dist: 0.005, dop: -42, grav: 0.00008, rot: 0, mag: 9.5, maxD: 0.05, unit: 'kpc', isStar: true, needsGrav: true }
+        };
+
+        let currentObj = PHYSICS_TARGETS.ngc4889;
+        let userParams = { dist: 0, dop: 0, grav: 0, rot: 0, z_cos: 0, isStar: false };
+        let activeViews = { spectral: true, hubble: false };
+
+        function getWlColor(wl) {
+            if (wl < 440) return [120, 0, 255];
+            if (wl < 490) return [0, 150, 255];
+            if (wl < 580) return [0, 255, 50];
+            if (wl < 645) return [255, 200, 0];
+            if (wl < 750) return [255, 50, 0];
+            return [80, 20, 40]; // IR
+        }
+
+        function getIntensity(wl, p) {
+            const z_cos = p.isStar ? 0 : (p.dist * H0) / C; 
+            const z_tot = (1 + z_cos) * (1 + p.dop/C) * (1 + p.grav) - 1;
+            
+            let flux = 1.0;
+            const peak = 550 * (1 + z_tot);
+            // Stable continuum
+            flux *= Math.exp(-Math.pow(wl - peak, 2) / 2000000) * 0.1 + 0.9;
+
+            Object.values(LINES).forEach(base => {
+                const center = base * (1 + z_tot);
+                
+                // DOUBLE HORN LOGIC: Forced separation
+                if (p.rot > 50) {
+                    // rotShift is proportional to rot and base wavelength
+                    // Increased factor (2.2) to ensure visible "Horns"
+                    const rotShift = (p.rot / C) * center * 2.2; 
+                    const sigma = 1.8 + (p.grav * 30000); // Narrower lines for better peak separation
+                    
+                    // Left Horn
+                    flux -= 0.65 * Math.exp(-Math.pow(wl - (center - rotShift), 2) / (2 * sigma * sigma));
+                    // Right Horn
+                    flux -= 0.65 * Math.exp(-Math.pow(wl - (center + rotShift), 2) / (2 * sigma * sigma));
+                } else {
+                    const sigma = 2.5 + (p.grav * 80000); // Standard Line
+                    flux -= 0.85 * Math.exp(-Math.pow(wl - center, 2) / (2 * sigma * sigma));
+                }
+            });
+            return Math.max(0.05, Math.min(1.2, flux));
+        }
+
+        function drawSpectral() {
+            const canvas = document.getElementById('specCanvas');
+            const ctx = canvas.getContext('2d');
+            const w = canvas.width = canvas.clientWidth;
+            const h = canvas.height = canvas.clientHeight;
+            if (w <= 0 || h <= 0) return;
+
+            ctx.clearRect(0,0,w,h);
+            
+            // Grid lines
+            ctx.strokeStyle = '#161b22';
+            ctx.lineWidth = 1;
+            for(let i=0; i<=10; i++) {
+                const x = (i/10)*w;
+                ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, h); ctx.stroke();
+                const y = (i/10)*h;
+                ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(w, y); ctx.stroke();
+            }
+
+            const drawProfile = (p, color, dashed = false) => {
+                ctx.beginPath();
+                ctx.strokeStyle = color;
+                ctx.lineWidth = 2;
+                if(dashed) ctx.setLineDash([5,5]); else ctx.setLineDash([]);
+                
+                for(let x=0; x < w; x++) {
+                    const wl = MIN_WL + (x/w) * (MAX_WL - MIN_WL);
+                    const val = getIntensity(wl, p);
+                    // STABLE COORDINATE SYSTEM: 1.2 is always top, 0.0 bottom
+                    const y = h - (val / 1.2) * h * 0.85 - 20;
+                    if(x === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+                }
+                ctx.stroke();
+            };
+
+            // Target Profile (Red Dashed)
+            drawProfile(currentObj, '#ef4444', true);
+            // User Model Profile (Cyan)
+            drawProfile(userParams, '#06b6d4');
+        }
+
+        function drawHubble() {
+            const canvas = document.getElementById('hubbleCanvas');
+            const ctx = canvas.getContext('2d');
+            const w = canvas.width = canvas.clientWidth;
+            const h = canvas.height = canvas.clientHeight;
+            if (w <= 0 || h <= 0) return;
+
+            ctx.clearRect(0,0,w,h);
+            const pad = 40;
+
+            ctx.strokeStyle = '#30363d';
+            ctx.beginPath();
+            ctx.moveTo(pad, pad); ctx.lineTo(pad, h-pad); ctx.lineTo(w-pad, h-pad);
+            ctx.stroke();
+
+            // Mapping: log(dist) on X, Magnitude on Y
+            const getX = (d) => pad + (Math.log10(d + 0.0001) + 4) / 7 * (w - 2*pad);
+            const getY = (m) => h - pad - ((20 - m) / 25) * (h - 2*pad);
+
+            // Hubble-Line Referenz
+            ctx.setLineDash([2,4]);
+            ctx.strokeStyle = '#1e293b';
+            ctx.beginPath();
+            for(let d=0.001; d<1500; d*=1.5) {
+                const m = 5 * Math.log10(d * 1e6) - 5; 
+                const x = getX(d); const y = getY(m);
+                if(x < pad || x > w-pad || y < pad || y > h-pad) continue;
+                if(d === 0.001) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+            }
+            ctx.stroke();
+            ctx.setLineDash([]);
+
+            // Target Point
+            const tx = getX(currentObj.dist);
+            const ty = getY(currentObj.mag);
+            ctx.fillStyle = '#ef4444';
+            ctx.beginPath(); ctx.arc(tx, ty, 6, 0, Math.PI*2); ctx.fill();
+
+            // User Selection Crosshair
+            const ux = getX(userParams.dist);
+            const uy = ty; 
+            ctx.strokeStyle = '#06b6d4';
+            ctx.lineWidth = 2;
+            ctx.strokeRect(ux-8, uy-8, 16, 16);
+        }
+
+        function drawTape(id, p) {
+            const c = document.getElementById(id);
+            if (!c) return;
+            const w = c.width = c.clientWidth;
+            const h = c.height = c.clientHeight;
+            if (w <= 0 || h <= 0) return;
+            const ctx = c.getContext('2d');
+            const img = ctx.createImageData(w, h);
+            for(let x=0; x<w; x++) {
+                const wl = MIN_WL + (x/w) * (MAX_WL - MIN_WL);
+                const inten = getIntensity(wl, p);
+                const [r,g,b] = getWlColor(wl);
+                for(let y=0; y<h; y++) {
+                    const idx = (y * w + x) * 4;
+                    img.data[idx] = r * (inten / 1.2);
+                    img.data[idx+1] = g * (inten / 1.2);
+                    img.data[idx+2] = b * (inten / 1.2);
+                    img.data[idx+3] = 255;
+                }
+            }
+            ctx.putImageData(img, 0, 0);
+        }
+
+        function updateUI() {
+            const gravInput = document.getElementById('input-grav');
+            const gravVal = document.getElementById('val-grav');
+            const distInput = document.getElementById('input-dist');
+            
+            if (currentObj.needsGrav) {
+                gravInput.disabled = false;
+                gravVal.innerText = parseFloat(gravInput.value).toFixed(6);
+                gravVal.className = "text-xs mono text-cyan-400";
+            } else {
+                gravInput.disabled = true;
+                gravInput.value = 0;
+                gravVal.innerText = "GESPERRT";
+                gravVal.className = "text-xs mono text-gray-600 italic";
+            }
+
+            userParams.dist = parseFloat(distInput.value);
+            userParams.dop = parseFloat(document.getElementById('input-dop').value);
+            userParams.grav = currentObj.needsGrav ? parseFloat(gravInput.value) : 0;
+            userParams.rot = parseFloat(document.getElementById('input-rot').value);
+            userParams.isStar = currentObj.isStar || false;
+            userParams.z_cos = userParams.isStar ? 0 : (userParams.dist * H0) / C;
+
+            document.getElementById('val-dist').innerText = userParams.dist.toFixed(currentObj.isStar ? 4 : 2);
+            document.getElementById('val-zcos').innerText = userParams.z_cos.toFixed(5);
+            document.getElementById('val-dop').innerText = Math.round(userParams.dop);
+            document.getElementById('val-rot').innerText = Math.round(userParams.rot);
+
+            const user_z_tot = (1 + userParams.z_cos) * (1 + userParams.dop/C) * (1 + userParams.grav) - 1;
+            document.getElementById('model-z-info').innerText = `z_total: ${user_z_tot.toFixed(4)}`;
+
+            render();
+        }
+
+        function render() {
+            if (activeViews.spectral) drawSpectral();
+            if (activeViews.hubble) drawHubble();
+            drawTape('tapeTarget', currentObj);
+            drawTape('tapeUser', userParams);
+
+            const target_z_cos = currentObj.isStar ? 0 : (currentObj.dist * H0) / C;
+            const target_z_tot = (1 + target_z_cos) * (1 + currentObj.dop/C) * (1 + currentObj.grav) - 1;
+            const user_z_tot = (1 + userParams.z_cos) * (1 + userParams.dop/C) * (1 + userParams.grav) - 1;
+
+            let spectralDiff = Math.abs(target_z_tot - user_z_tot);
+            let profileDiff = currentObj.isBinary || currentObj.needsRot ? Math.abs(userParams.rot - currentObj.rot) / 500 : 0;
+            let gravDiff = currentObj.needsGrav ? Math.abs(userParams.grav - currentObj.grav) * 8000 : 0;
+
+            let hubbleMatch = true;
+            if (activeViews.hubble) {
+                hubbleMatch = Math.abs(userParams.dist - currentObj.dist) < (currentObj.dist * 0.1 + 0.001);
+            }
+
+            const light = document.getElementById('conf-light');
+            const label = document.getElementById('conf-label');
+            const dataText = document.getElementById('match-data');
+
+            if (spectralDiff < 0.0015 && profileDiff < 0.1 && gravDiff < 0.01 && hubbleMatch) {
+                light.className = 'status-light bg-green-500 shadow-[0_0_15px_#22c55e]';
+                label.innerText = 'Signal Validiert';
+                label.className = 'text-[10px] uppercase mono font-bold text-green-500';
+                dataText.innerText = 'Modell-Übereinstimmung innerhalb der Toleranz (Sigma-Match).';
+            } else if (spectralDiff < 0.015) {
+                light.className = 'status-light bg-yellow-500 shadow-[0_0_15px_#eab308]';
+                label.innerText = 'Teilweise Übereinstimmung';
+                label.className = 'text-[10px] uppercase mono font-bold text-yellow-500';
+                dataText.innerText = hubbleMatch ? 'Linienform (Rotation/Gravitation) weicht noch ab.' : 'Helligkeit (Distanz) nicht kongruent.';
+            } else {
+                light.className = 'status-light bg-red-500 shadow-[0_0_10px_red]';
+                label.innerText = 'Signal-Inkonsistenz';
+                label.className = 'text-[10px] uppercase mono font-bold text-red-500';
+                dataText.innerText = 'Wellenlängen-Verschiebung detektiert. Modell fittet nicht.';
+            }
+        }
+
+        document.getElementById('toggle-spectral').onclick = (e) => {
+            activeViews.spectral = !activeViews.spectral;
+            e.target.classList.toggle('active');
+            document.getElementById('panel-spectral').classList.toggle('hidden-view');
+            setTimeout(render, 50);
+        };
+
+        document.getElementById('toggle-hubble').onclick = (e) => {
+            activeViews.hubble = !activeViews.hubble;
+            const panel = document.getElementById('panel-hubble');
+            const mainPanel = document.getElementById('panel-analysis');
+            e.target.classList.toggle('active');
+            panel.classList.toggle('hidden-view');
+            
+            if (activeViews.hubble) {
+                mainPanel.classList.replace('lg:col-span-12', 'lg:col-span-8');
+            } else {
+                mainPanel.classList.replace('lg:col-span-8', 'lg:col-span-12');
+            }
+            setTimeout(render, 50);
+        };
+
+        document.getElementById('scenarioSelect').onchange = (e) => {
+            currentObj = PHYSICS_TARGETS[e.target.value];
+            const distInput = document.getElementById('input-dist');
+            document.getElementById('unit-dist').innerText = currentObj.unit;
+            distInput.max = currentObj.maxD;
+            distInput.value = 0;
+            document.getElementById('input-dop').value = 0;
+            document.getElementById('input-rot').value = 0;
+            document.getElementById('input-grav').value = 0;
+            updateUI();
+        };
+
+        function initColorBar() {
+            const bar = document.getElementById('color-bar');
+            bar.innerHTML = '';
+            for(let i=0; i<100; i++) {
+                const wl = MIN_WL + (i/100) * (MAX_WL - MIN_WL);
+                const [r,g,b] = getWlColor(wl);
+                const div = document.createElement('div');
+                div.style.flex = "1";
+                div.style.backgroundColor = `rgb(${r},${g},${b})`;
+                bar.appendChild(div);
+            }
+        }
+
+        document.querySelectorAll('input[type=range]').forEach(i => i.oninput = updateUI);
+        window.onresize = render;
+        window.onload = () => {
+            initColorBar();
+            updateUI();
+        };
+    </script>
+</body>
+</html>
